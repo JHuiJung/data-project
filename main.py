@@ -1,0 +1,61 @@
+"""
+[종합 실습] 비동기 API 수집 -> Pydantic 검증 -> CSV/Parquet 저장 파이프라인
+- 3개의 외부 API를 asyncio + httpx로 동시에 수집한다.
+- 작성자: 정희중 (광주캠퍼스 4반)
+
+변경내역:
+    2026-07-20  비동기 수집 단계 작성
+"""
+
+import asyncio
+import logging
+import os
+from typing import Optional
+
+import httpx
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+API_URLS: dict[str, str] = {
+    "weather": os.environ["WEATHER_API_URL"],
+    "country": os.environ["COUNTRY_API_URL"],
+    "ip": os.environ["IP_API_URL"],
+}
+
+
+async def fetch_json(client: httpx.AsyncClient, name: str, url: str) -> Optional[dict]:
+    """API 하나를 호출해 JSON을 반환한다. 실패 시 None을 반환하고 오류를 로깅한다."""
+    try:
+        response = await client.get(url, timeout=10)
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.error("%s 수집 실패: %s", name, e)
+        return None
+    return response.json()
+
+
+async def fetch_all(urls: dict[str, str]) -> dict[str, Optional[dict]]:
+    """asyncio.gather()로 여러 API를 동시에 호출해 결과를 dict로 반환한다."""
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(
+            *(fetch_json(client, name, url) for name, url in urls.items())
+        )
+    return dict(zip(urls.keys(), results))
+
+
+def main() -> dict[str, Optional[dict]]:
+    results = asyncio.run(fetch_all(API_URLS))
+    for name, data in results.items():
+        if data is None:
+            logger.info("[%s] 수집 실패", name)
+        else:
+            logger.info("[%s] 수집 성공: %s", name, str(data)[:120])
+    return results
+
+
+if __name__ == "__main__":
+    main()
