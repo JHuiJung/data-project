@@ -10,9 +10,11 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Optional
 
 import httpx
+import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError
 
@@ -20,6 +22,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 API_URLS: dict[str, str] = {
     "weather": os.environ["WEATHER_API_URL"],
@@ -129,6 +133,46 @@ def extract_ip(data: dict) -> Optional[IpInfo]:
         return None
 
 
+# ---------------------------------------------------------
+# 저장 및 성능 비교
+# ---------------------------------------------------------
+def save_and_compare(records: list[dict], name: str) -> None:
+    """레코드를 CSV·Parquet로 각각 저장/재로딩하며 걸린 시간을 측정해 로깅한다."""
+    if not records:
+        logger.info("[%s] 저장할 레코드가 없습니다", name)
+        return
+
+    df = pd.DataFrame(records)
+    csv_path = os.path.join(BASE_DIR, f"{name}.csv")
+    parquet_path = os.path.join(BASE_DIR, f"{name}.parquet")
+
+    t0 = time.perf_counter()
+    df.to_csv(csv_path, index=False)
+    csv_write_sec = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    df.to_parquet(parquet_path, index=False)
+    parquet_write_sec = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    pd.read_csv(csv_path)
+    csv_read_sec = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    pd.read_parquet(parquet_path)
+    parquet_read_sec = time.perf_counter() - t0
+
+    logger.info(
+        "[%s] %d건 | write csv=%.5fs parquet=%.5fs | read csv=%.5fs parquet=%.5fs",
+        name,
+        len(records),
+        csv_write_sec,
+        parquet_write_sec,
+        csv_read_sec,
+        parquet_read_sec,
+    )
+
+
 def main() -> None:
     results = asyncio.run(fetch_all(API_URLS))
     for name, data in results.items():
@@ -144,6 +188,10 @@ def main() -> None:
     logger.info("[검증] weather 유효 레코드: %d건", len(weather_records))
     logger.info("[검증] country: %s", "성공" if country_record else "실패")
     logger.info("[검증] ip: %s", "성공" if ip_record else "실패")
+
+    save_and_compare([r.model_dump() for r in weather_records], "weather")
+    save_and_compare([country_record.model_dump()] if country_record else [], "country")
+    save_and_compare([ip_record.model_dump()] if ip_record else [], "ip")
 
 
 if __name__ == "__main__":
