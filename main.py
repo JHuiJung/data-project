@@ -87,19 +87,19 @@ def extract_weather(data: dict) -> list[WeatherHour]:
     """weather API 응답에서 시간별 기온·강수확률을 검증해 리스트로 반환한다."""
     hourly = data["hourly"]
     records: list[WeatherHour] = []
-    for time, temperature, precipitation in zip(
+    for timestamp, temperature, precipitation in zip(
         hourly["time"], hourly["temperature_2m"], hourly["precipitation_probability"]
     ):
         try:
             records.append(
                 WeatherHour(
-                    time=time,
+                    time=timestamp,
                     temperature_2m=temperature,
                     precipitation_probability=precipitation,
                 )
             )
         except ValidationError as e:
-            logger.error("weather 레코드 검증 실패(%s): %s", time, e)
+            logger.error("weather 레코드 검증 실패(%s): %s", timestamp, e)
     return records
 
 
