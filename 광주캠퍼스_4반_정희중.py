@@ -1,103 +1,119 @@
 """
-[실습 1] 자료구조 집계 · 컴프리헨션 · 제너레이터
-- Python_Practice1_Data.json(sales) 데이터를 활용한 매출 집계 실습
+[실습 2] 파일 I/O, 예외 처리, Pydantic 검증 파이프라인
+- Python_Practice2_Data.json 데이터와 임의로 만든 오류 데이터(dirty_data)를 합쳐
+  Pydantic v2로 검증하고, valid/errors를 분리해 CSV/JSON으로 저장·재로딩하는 실습
 - 작성자: 정희중 (광주캠퍼스 4반)
 
 변경내역:
     2026-07-20  최초 작성
 """
 
+import csv
 import json
+import logging
 import os
-import sys
-from collections import Counter, defaultdict
+from typing import Optional
 
-DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Python_Practice2_Data.json")
+from pydantic import BaseModel, Field, ValidationError
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(BASE_DIR, "Python_Practice2_Data.json")
+VALID_CSV_PATH = os.path.join(BASE_DIR, "valid_sales.csv")
+ERRORS_JSON_PATH = os.path.join(BASE_DIR, "errors_sales.json")
 
 
-def load_sales(path: str) -> list[dict]:
-    """JSON 배열([...]) 형태로 저장된 데이터 파일을 읽어 sales 리스트를 반환한다."""
+# ---------------------------------------------------------
+# 1) 예외 처리 + 파일 읽기 (4번 재로딩에서 사용)
+# ---------------------------------------------------------
+def safe_load_csv(path: str) -> Optional[list[dict]]:
+    """CSV 파일을 읽어 dict 리스트로 반환한다. 파일이 없으면 None을 반환한다."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(f"데이터 파일을 찾을 수 없습니다: {path}") from e
-    except json.JSONDecodeError as e:
-        raise ValueError(f"데이터 파일 형식이 올바르지 않습니다: {path}") from e
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+    except FileNotFoundError:
+        logger.error("파일을 찾을 수 없습니다: %s", path)
+        return None
+    else:
+        logger.info("%s에서 %d건 로드 완료", path, len(rows))
+        return rows
+    finally:
+        print("로딩 종료")
 
 
-sales = load_sales(DATA_PATH)
-
-
-# ---------------------------------------------------------
-# 1) 리스트/딕셔너리 컴프리헨션
-# ---------------------------------------------------------
-# amount >= 1000인 거래만 필터링
-high_amount_sales = [s for s in sales if s["amount"] >= 1000]
-
-# 지역별 amount를 한 번의 순회로 모은 뒤, 컴프리헨션으로 지역별 총매출 dict를 계산
-_region_amounts = defaultdict(list)
-for s in sales:
-    _region_amounts[s["region"]].append(s["amount"])
-
-region_total = {region: sum(amounts) for region, amounts in _region_amounts.items()}
-
-assert sum(region_total.values()) == sum(s["amount"] for s in sales)
-assert set(region_total) == {s["region"] for s in sales}
-
-# 지역 총매출 top3
-top3_region = sorted(region_total.items(), key=lambda item: item[1], reverse=True)[:3]
-assert all(top3_region[i][1] >= top3_region[i + 1][1] for i in range(len(top3_region) - 1))
-
-print("[1] amount>=1000 건수:", len(high_amount_sales))
-print("[1] 자역별 총 매줄:", region_total)
-print("[1] top3 지역 매출:", top3_region)
+# 체크포인트 1: 존재하지 않는 파일 → None 반환
+missing_result = safe_load_csv(os.path.join(BASE_DIR, "존재하지않는파일.csv"))
+assert missing_result is None
 
 
 # ---------------------------------------------------------
-# 2) Counter + defaultdict
+# 2) Pydantic v2 스키마 정의
 # ---------------------------------------------------------
-# 지역별 거래 건수
-region_counter = Counter(s["region"] for s in sales)
+class SalesRecord(BaseModel):
+    """매출 레코드 스키마. month/region은 비어있으면 안 되고, amount는 0 초과여야 한다."""
 
-# 카테고리별 amount 리스트
-category_amounts = defaultdict(list)
-for s in sales:
-    category_amounts[s["category"]].append(s["amount"])
-
-assert sum(region_counter.values()) == len(sales)
-
-print("[2] 지역별 거래 건수 :", region_counter.most_common())
-print("[2] 카테고리별 amount 리스트 :", dict(category_amounts))
+    month: str = Field(min_length=1)
+    region: str = Field(min_length=1)
+    amount: float = Field(gt=0)
+    category: Optional[str] = None
 
 
 # ---------------------------------------------------------
-# 3) 제너레이터 - 메모리 비교
+# 3) 검증 파이프라인 (valid / errors 분리)
 # ---------------------------------------------------------
+# Python_Practice2_Data.json 전체를 raw_data로 가져온다.
+with open(DATA_PATH, "r", encoding="utf-8") as f:
+    sales_data: list[dict] = json.load(f)
 
-high_amount_list = [s for s in sales if s["amount"] > 1000]
-high_amount_gen = (s for s in sales if s["amount"] > 1000)
+# 검증 실패 케이스를 보여줄 dirty_data (region 빈 값 / amount<=0 / month 빈 값)를
+# 직접 만들어 raw_data에 더한다.
+dirty_data: list[dict] = [
+    {"region": "", "category": "전자", "amount": 1200, "month": "2024-03"},
+    {"region": "세종", "category": "식품", "amount": -300, "month": "2024-03"},
+    {"region": "울산", "category": "의류", "amount": 700, "month": ""},
+]
 
-list_size = sys.getsizeof(high_amount_list)
-gen_size = sys.getsizeof(high_amount_gen)
+raw_data: list[dict] = sales_data + dirty_data
 
-assert gen_size < list_size
+valid: list[dict] = []
+errors: list[dict] = []
 
-print(f"[3] 리스트 사이즈 : {list_size} bytes / 제너레이터 사이즈 : {gen_size} bytes")
+for row in raw_data:
+    try:
+        record = SalesRecord(**row)
+    except ValidationError as e:
+        logger.error("검증 실패: %s", e)
+        errors.append({"row": row, "error": str(e)})
+    else:
+        valid.append(record.model_dump())
+
+assert len(valid) == len(sales_data)
+assert len(errors) == len(dirty_data)
+
+print("[3] valid 건수:", len(valid))
+print("[3] errors 건수:", len(errors))
 
 
 # ---------------------------------------------------------
-# 4) 종합 - 월별 카테고리 매출 집계
+# 4) 결과 파일 저장 + 재로딩 확인
 # ---------------------------------------------------------
-# (month, category) 조합별 총매출을 한 번의 순회로 집계
-_month_category_amounts = defaultdict(list)
-for s in sales:
-    _month_category_amounts[(s["month"], s["category"])].append(s["amount"])
+def save_valid_to_csv(records: list[dict], path: str) -> None:
+    """valid 레코드 리스트를 CSV 파일로 저장한다."""
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=records[0].keys())
+        writer.writeheader()
+        writer.writerows(records)
 
-month_category_total = {key: sum(amounts) for key, amounts in _month_category_amounts.items()}
 
-top3 = sorted(month_category_total.items(), key=lambda item: item[1], reverse=True)[:3]
-assert all(top3[i][1] >= top3[i + 1][1] for i in range(len(top3) - 1))
+save_valid_to_csv(valid, VALID_CSV_PATH)
 
-print("[4] 달, 카테고리별 매출:", month_category_total)
-print("[4] top3 매출 :", top3)
+with open(ERRORS_JSON_PATH, "w", encoding="utf-8") as f:
+    json.dump(errors, f, ensure_ascii=False, indent=2)
+
+reloaded = safe_load_csv(VALID_CSV_PATH)
+assert reloaded is not None
+assert len(reloaded) == len(sales_data)
+
+print("[4] 재로딩 건수:", len(reloaded))

@@ -1,0 +1,29 @@
+[
+  {
+    "row": {
+      "region": "",
+      "category": "전자",
+      "amount": 1200,
+      "month": "2024-03"
+    },
+    "error": "1 validation error for SalesRecord\nregion\n  String should have at least 1 character [type=string_too_short, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_too_short"
+  },
+  {
+    "row": {
+      "region": "세종",
+      "category": "식품",
+      "amount": -300,
+      "month": "2024-03"
+    },
+    "error": "1 validation error for SalesRecord\namount\n  Input should be greater than 0 [type=greater_than, input_value=-300, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.13/v/greater_than"
+  },
+  {
+    "row": {
+      "region": "울산",
+      "category": "의류",
+      "amount": 700,
+      "month": ""
+    },
+    "error": "1 validation error for SalesRecord\nmonth\n  String should have at least 1 character [type=string_too_short, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_too_short"
+  }
+]
