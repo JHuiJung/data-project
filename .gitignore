@@ -7,7 +7,4 @@ __pycache__/
 .coverage
 .ruff_cache/
 commitTest.txt
-*.parquet
-weather.csv
-country.csv
-ip.csv
+.pytest_cache/

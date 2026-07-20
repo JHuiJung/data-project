@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_DIR = os.path.join(BASE_DIR, "csvs")
+PARQUET_DIR = os.path.join(BASE_DIR, "parquets")
 
 # API 주소는 .env에서 관리 (WEATHER_API_URL / COUNTRY_API_URL / IP_API_URL).
 API_URLS: dict[str, str] = {
@@ -180,9 +182,12 @@ def save_and_compare(records: list[dict], name: str) -> None:
         logger.info("[%s] 저장할 레코드가 없습니다", name)
         return
 
+    os.makedirs(CSV_DIR, exist_ok=True)
+    os.makedirs(PARQUET_DIR, exist_ok=True)
+
     df = pd.DataFrame(records)
-    csv_path = os.path.join(BASE_DIR, f"{name}.csv")
-    parquet_path = os.path.join(BASE_DIR, f"{name}.parquet")
+    csv_path = os.path.join(CSV_DIR, f"{name}.csv")
+    parquet_path = os.path.join(PARQUET_DIR, f"{name}.parquet")
 
     t0 = time.perf_counter()
     df.to_csv(csv_path, index=False)
