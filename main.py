@@ -14,6 +14,7 @@ from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field, ValidationError
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -47,14 +48,102 @@ async def fetch_all(urls: dict[str, str]) -> dict[str, Optional[dict]]:
     return dict(zip(urls.keys(), results))
 
 
-def main() -> dict[str, Optional[dict]]:
+# ---------------------------------------------------------
+# 스키마 검증
+# ---------------------------------------------------------
+class WeatherHour(BaseModel):
+    """시간별 기온·강수확률 레코드."""
+
+    time: str
+    temperature_2m: float
+    precipitation_probability: int = Field(ge=0, le=100)
+
+
+class CountryInfo(BaseModel):
+    """국가 정보 레코드."""
+
+    name: str
+    capital: str
+    region: str
+    population: int = Field(gt=0)
+    area: float = Field(gt=0)
+
+
+class IpInfo(BaseModel):
+    """IP 조회 결과 레코드."""
+
+    query: str
+    country: str
+    city: str
+    lat: float
+    lon: float
+
+
+def extract_weather(data: dict) -> list[WeatherHour]:
+    """weather API 응답에서 시간별 기온·강수확률을 검증해 리스트로 반환한다."""
+    hourly = data["hourly"]
+    records: list[WeatherHour] = []
+    for time, temperature, precipitation in zip(
+        hourly["time"], hourly["temperature_2m"], hourly["precipitation_probability"]
+    ):
+        try:
+            records.append(
+                WeatherHour(
+                    time=time,
+                    temperature_2m=temperature,
+                    precipitation_probability=precipitation,
+                )
+            )
+        except ValidationError as e:
+            logger.error("weather 레코드 검증 실패(%s): %s", time, e)
+    return records
+
+
+def extract_country(data: dict) -> Optional[CountryInfo]:
+    """country API 응답에서 필요한 필드를 뽑아 검증한다."""
+    try:
+        return CountryInfo(
+            name=data["name"],
+            capital=data["capital"],
+            region=data["region"],
+            population=data["population"],
+            area=data["area"],
+        )
+    except (KeyError, ValidationError) as e:
+        logger.error("country 레코드 검증 실패: %s", e)
+        return None
+
+
+def extract_ip(data: dict) -> Optional[IpInfo]:
+    """ip API 응답에서 필요한 필드를 뽑아 검증한다."""
+    try:
+        return IpInfo(
+            query=data["query"],
+            country=data["country"],
+            city=data["city"],
+            lat=data["lat"],
+            lon=data["lon"],
+        )
+    except (KeyError, ValidationError) as e:
+        logger.error("ip 레코드 검증 실패: %s", e)
+        return None
+
+
+def main() -> None:
     results = asyncio.run(fetch_all(API_URLS))
     for name, data in results.items():
         if data is None:
             logger.info("[%s] 수집 실패", name)
         else:
             logger.info("[%s] 수집 성공: %s", name, str(data)[:120])
-    return results
+
+    weather_records = extract_weather(results["weather"]) if results["weather"] else []
+    country_record = extract_country(results["country"]) if results["country"] else None
+    ip_record = extract_ip(results["ip"]) if results["ip"] else None
+
+    logger.info("[검증] weather 유효 레코드: %d건", len(weather_records))
+    logger.info("[검증] country: %s", "성공" if country_record else "실패")
+    logger.info("[검증] ip: %s", "성공" if ip_record else "실패")
 
 
 if __name__ == "__main__":
